@@ -5,19 +5,16 @@ interval, logs the result, and manages incident open/close + alerting.
 """
 
 import time
-import yaml
 import httpx
 from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.database import SessionLocal
-from app.models import Service, PingLog, Incident
-from app.alerts import send_alert, down_message, up_message
+from pulsewatch.database import SessionLocal
+from pulsewatch.models import Service, PingLog, Incident
+from pulsewatch.alerts import send_alert, down_message, up_message
 
-
-def load_config(path="config.yaml"):
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+# Re-exported so `from pulsewatch.monitor import load_config` keeps working.
+from pulsewatch.config import load_config  # noqa: F401
 
 
 def sync_services_from_config(config):

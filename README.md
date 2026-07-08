@@ -28,20 +28,51 @@ thresholds (so one blip doesn't page you), incident tracking, and alerting.
 - JSON API (`/api/status`, `/api/services/{id}/history`) for scripting or
   integration elsewhere
 
-## Running it locally
+## Installing
+
+pulsewatch is a proper installable package. Install it in editable mode from a
+clone:
 
 ```bash
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+pip install -e .
 ```
+
+This puts a `pulsewatch` command on your PATH. Run it with no arguments to see
+the full help menu:
+
+```bash
+pulsewatch --help
+```
+
+## The CLI
+
+```bash
+pulsewatch init                              # write a default config.yaml here
+pulsewatch add --name "My API" \
+               --url https://api.example.com/health \
+               --interval 30 --threshold 3   # append a service, no hand-editing
+pulsewatch serve                             # start the app + background monitor
+```
+
+- `pulsewatch init` creates a `config.yaml` in the current directory (use
+  `--force` to overwrite an existing one).
+- `pulsewatch add` appends a service to the active `config.yaml` (`--interval`
+  and `--threshold` are optional and default to 30s / 3 failures). If no config
+  exists yet it creates one in the current directory.
+- `pulsewatch serve` replaces the old `uvicorn app.main:app` command. It accepts
+  `--host`, `--port`, and `--reload`.
 
 Then open http://127.0.0.1:8000
 
 ## Configuring services
 
-Edit `config.yaml`:
+You can hand-edit `config.yaml` or use `pulsewatch add`. pulsewatch looks for
+config in this order:
+
+1. `./config.yaml` (the current working directory)
+2. `~/.pulsewatch/config.yaml` (per-user fallback)
 
 ```yaml
 services:
@@ -74,7 +105,10 @@ appear — then watch it self-resolve once a check succeeds again.
 ## Architecture
 
 ```
-app/
+pyproject.toml            # packaging, dependencies, `pulsewatch` entry point
+src/pulsewatch/
+├── cli.py        # click CLI: init / serve / add
+├── config.py     # config discovery (CWD → ~/.pulsewatch) + default template
 ├── main.py       # FastAPI routes, dashboard rendering, startup wiring
 ├── monitor.py    # scheduler: pings services, manages incident state
 ├── models.py     # Service / PingLog / Incident tables

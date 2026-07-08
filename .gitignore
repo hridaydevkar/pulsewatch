@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 uptime.db
 .env
+
+# packaging / build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/

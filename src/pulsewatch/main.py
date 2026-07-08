@@ -5,21 +5,27 @@ FastAPI app exposing:
 - GET /api/status    -> JSON status for all services (for curl/Postman demo)
 - GET /api/services/{id}/history -> ping history for one service
 
-Run with: uvicorn app.main:app --reload
+Run with: pulsewatch serve   (or: uvicorn pulsewatch.main:app --reload)
 """
 
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.database import Base, engine, SessionLocal
-from app.models import Service, PingLog, Incident
-from app.monitor import load_config, sync_services_from_config, start_scheduler
+from pulsewatch.config import load_config
+from pulsewatch.database import Base, engine, SessionLocal
+from pulsewatch.models import Service, PingLog, Incident
+from pulsewatch.monitor import sync_services_from_config, start_scheduler
+
+# Resolve static assets relative to this package, not the current working
+# directory, so `pulsewatch serve` works from anywhere.
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="Uptime Monitor")
-templates = Jinja2Templates(directory="app/static")
+templates = Jinja2Templates(directory=str(STATIC_DIR))
 
 # --- startup: create tables, load config, sync services, start scheduler ---
 Base.metadata.create_all(bind=engine)
