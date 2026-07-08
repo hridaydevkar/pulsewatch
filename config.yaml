@@ -1,0 +1,17 @@
+# List the services you want to monitor here.
+# check_interval_seconds: how often to ping this service
+# failure_threshold: consecutive failures before an incident is opened
+
+services:
+  - name: "Example API"
+    url: "https://httpbin.org/status/200"
+    check_interval_seconds: 30
+    failure_threshold: 3
+
+  - name: "Flaky Demo Service"
+    url: "https://httpbin.org/status/200,500"
+    check_interval_seconds: 30
+    failure_threshold: 3
+
+# Discord webhook URL for alerts (leave blank to disable alerting)
+discord_webhook_url: ""

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>uptime — dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0d0e;
+      --panel: #131618;
+      --line: #22262a;
+      --text: #e7e9ea;
+      --dim: #7d868c;
+      --up: #35d07f;
+      --down: #ff5c5c;
+      --amber: #f5a623;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .mono { font-family: 'IBM Plex Mono', monospace; }
+
+    header {
+      padding: 32px 40px 24px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+    header h1 span { color: var(--dim); font-weight: 400; }
+    header .clock {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px;
+      color: var(--dim);
+    }
+
+    main { padding: 32px 40px 60px; max-width: 1100px; margin: 0 auto; }
+
+    .section-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin: 0 0 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 14px;
+      margin-bottom: 48px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
+      width: 3px;
+    }
+    .card.up::before { background: var(--up); }
+    .card.down::before { background: var(--down); }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+    .card-name { font-size: 15px; font-weight: 600; }
+    .card-url {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: var(--dim);
+      margin-top: 3px;
+      word-break: break-all;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 5px;
+    }
+    .dot.up { background: var(--up); box-shadow: 0 0 8px var(--up); }
+    .dot.down { background: var(--down); box-shadow: 0 0 8px var(--down); animation: pulse 1.4s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    .status-word {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .status-word.up { color: var(--up); }
+    .status-word.down { color: var(--down); }
+
+    .uptime-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      color: var(--dim);
+    }
+    .uptime-pct { font-size: 22px; color: var(--text); font-weight: 500; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      text-align: left;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--dim);
+      font-weight: 500;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--text);
+    }
+    tr:last-child td { border-bottom: none; }
+    .badge {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge.resolved { background: rgba(53,208,127,0.12); color: var(--up); }
+    .badge.ongoing { background: rgba(255,92,92,0.12); color: var(--down); }
+
+    .empty {
+      color: var(--dim);
+      font-size: 13px;
+      font-family: 'IBM Plex Mono', monospace;
+      padding: 20px 0;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--dim);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      padding: 20px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>uptime<span>.monitor</span></h1>
+    <div class="clock mono" id="clock"></div>
+  </header>
+
+  <main>
+    <p class="section-label">services · {{ services|length }} watched</p>
+    <div class="grid">
+      {% for s in services %}
+      <div class="card {{ 'up' if s.is_up else 'down' }}">
+        <div class="card-top">
+          <div>
+            <div class="card-name">{{ s.name }}</div>
+            <div class="card-url">{{ s.url }}</div>
+          </div>
+          <div class="dot {{ 'up' if s.is_up else 'down' }}"></div>
+        </div>
+        <div class="status-word {{ 'up' if s.is_up else 'down' }}">
+          {{ 'operational' if s.is_up else 'down' }}
+        </div>
+        <div class="uptime-row" style="margin-top:14px;">
+          <span>uptime (24h)</span>
+        </div>
+        <div class="uptime-pct">{{ s.uptime_pct }}%</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <p class="section-label">incident history</p>
+    {% if incidents|length == 0 %}
+      <div class="empty">No incidents recorded yet. All quiet.</div>
+    {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Started</th>
+          <th>Duration</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inc in incidents %}
+        <tr>
+          <td>{{ inc.service_name }}</td>
+          <td class="mono">{{ inc.started_at }}</td>
+          <td class="mono">{{ inc.duration_min }} min</td>
+          <td>
+            <span class="badge {{ 'resolved' if inc.resolved else 'ongoing' }}">
+              {{ 'resolved' if inc.resolved else 'ongoing' }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </main>
+
+  <footer>refreshes every 15s · GET /api/status for raw JSON</footer>
+
+  <script>
+    function tick() {
+      const now = new Date();
+      document.getElementById('clock').textContent = now.toUTCString().split(' ').slice(0,5).join(' ');
+    }
+    tick();
+    setInterval(tick, 1000);
+    setTimeout(() => location.reload(), 15000);
+  </script>
+</body>
+</html>
