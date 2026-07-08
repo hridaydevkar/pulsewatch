@@ -17,6 +17,27 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+def as_utc(dt):
+    """Normalize a datetime to timezone-aware UTC.
+
+    SQLite (via SQLAlchemy's default DateTime column) stores datetimes
+    without timezone info, so values written as timezone-aware UTC come
+    back *naive* after a DB round-trip. Subtracting such a value from an
+    aware datetime (e.g. ``utcnow()``) raises:
+
+        TypeError: can't subtract offset-naive and offset-aware datetimes
+
+    This helper makes comparisons safe regardless of which side is aware
+    or naive: naive values are assumed to be UTC (which is how we store
+    them), aware values are converted to UTC. Returns None unchanged.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class Service(Base):
     __tablename__ = "services"
 
@@ -60,5 +81,8 @@ class Incident(Base):
 
     @property
     def duration_seconds(self):
-        end = self.resolved_at or utcnow()
-        return (end - self.started_at).total_seconds()
+        # Normalize both sides to aware-UTC: started_at comes back naive
+        # from SQLite, while resolved_at/utcnow() are aware. See as_utc().
+        end = as_utc(self.resolved_at) or utcnow()
+        start = as_utc(self.started_at)
+        return (end - start).total_seconds()
