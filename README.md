@@ -1,4 +1,4 @@
-# uptime-monitor
+# pulsewatch
 
 A self-hosted uptime & status-page tool. Pings the services you configure on
 their own schedule, tracks response history, opens/resolves incidents
