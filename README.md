@@ -24,10 +24,10 @@ thresholds (so one blip doesn't page you), incident tracking, and alerting.
   and automatic resolution on recovery
 - Pluggable alert channels (Discord, Slack, email) on both down and recovery
   events — enable as many as you like
-- Live dashboard (`/`) showing current status, 24h uptime %, and incident
-  history
-- JSON API (`/api/status`, `/api/services/{id}/history`) for scripting or
-  integration elsewhere
+- Live dashboard (`/`) showing current status, 24h uptime %, a per-service
+  response-time sparkline (last hour, via Chart.js), and incident history
+- JSON API (`/api/status`, `/api/services/{id}/history`,
+  `/api/services/{id}/response-times`) for scripting or integration elsewhere
 
 ## Installing
 

@@ -16,6 +16,7 @@
       --up: #35d07f;
       --down: #ff5c5c;
       --amber: #f5a623;
+      --spark: #4aa8ff;
     }
     * { box-sizing: border-box; }
     body {
@@ -129,6 +130,19 @@
     }
     .uptime-pct { font-size: 22px; color: var(--text); font-weight: 500; }
 
+    .spark-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: var(--dim);
+      margin: 18px 0 6px;
+    }
+    .spark-latest { color: var(--text); }
+    .spark-wrap { position: relative; height: 44px; width: 100%; }
+    canvas.spark { display: block; }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -203,6 +217,14 @@
           <span>uptime (24h)</span>
         </div>
         <div class="uptime-pct">{{ s.uptime_pct }}%</div>
+
+        <div class="spark-head">
+          <span>response time (1h)</span>
+          <span class="spark-latest mono" data-latest-for="{{ s.id }}">—</span>
+        </div>
+        <div class="spark-wrap">
+          <canvas class="spark" data-service-id="{{ s.id }}"></canvas>
+        </div>
       </div>
       {% endfor %}
     </div>
@@ -240,7 +262,84 @@
 
   <footer>refreshes every 15s · GET /api/status for raw JSON</footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script>
+    // Response-time sparklines. The page reloads every 15s (see below), so
+    // these are re-fetched and re-drawn on that same cadence — no extra timer.
+    const SPARK_COLOR =
+      getComputedStyle(document.documentElement).getPropertyValue('--spark').trim() || '#4aa8ff';
+    const SPARK_FILL = 'rgba(74,168,255,0.14)';
+
+    function renderSpark(canvas, points) {
+      const latestEl = document.querySelector(
+        `[data-latest-for="${canvas.dataset.serviceId}"]`);
+      const values = points.map(p => p.response_time_ms);
+      const withData = values.filter(v => v !== null && v !== undefined);
+      if (withData.length === 0) {
+        if (latestEl) latestEl.textContent = 'no data';
+        return;
+      }
+      const last = withData[withData.length - 1];
+      if (latestEl) latestEl.textContent = Math.round(last) + ' ms';
+
+      new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: points.map(p => p.timestamp),
+          datasets: [{
+            data: values,
+            borderColor: SPARK_COLOR,
+            backgroundColor: SPARK_FILL,
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            pointHoverBackgroundColor: SPARK_COLOR,
+            fill: true,
+            tension: 0.3,
+            spanGaps: true,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              displayColors: false,
+              callbacks: {
+                title: (items) => new Date(items[0].label).toLocaleTimeString(),
+                label: (item) =>
+                  item.parsed.y == null ? 'no response' : `${item.parsed.y} ms`,
+              },
+            },
+          },
+          // Sparkline: no axes, auto-scaled to show trend; exact values are in
+          // the tooltip and the "N ms" readout above.
+          scales: {
+            x: { display: false },
+            y: { display: false, grace: '10%' },
+          },
+        },
+      });
+    }
+
+    function loadSparks() {
+      document.querySelectorAll('canvas.spark').forEach(async (canvas) => {
+        try {
+          const res = await fetch(
+            `/api/services/${canvas.dataset.serviceId}/response-times?window_minutes=60`);
+          if (!res.ok) return;
+          const data = await res.json();
+          renderSpark(canvas, data.points || []);
+        } catch (e) {
+          /* a broken sparkline must not break the rest of the dashboard */
+        }
+      });
+    }
+    if (window.Chart) loadSparks();
+
     function tick() {
       const now = new Date();
       document.getElementById('clock').textContent = now.toUTCString().split(' ').slice(0,5).join(' ');
