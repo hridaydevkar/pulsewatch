@@ -36,8 +36,19 @@ services:
     check_interval_seconds: 30
     failure_threshold: 3
 
-# Discord webhook URL for alerts (leave blank to disable alerting)
-discord_webhook_url: ""
+# Alert channels: one block per destination to notify on down/recovery events.
+# With none enabled, alerts are just logged to the console.
+alerts: []
+  # - type: discord
+  #   webhook_url: "https://discord.com/api/webhooks/..."
+  # - type: slack
+  #   webhook_url: "https://hooks.slack.com/services/..."
+  # - type: email
+  #   to: "oncall@example.com"
+  #   from: "pulsewatch@example.com"    # optional; defaults to the SMTP user
+  #   # SMTP host/port/credentials are read from environment variables:
+  #   #   PULSEWATCH_SMTP_HOST, PULSEWATCH_SMTP_PORT (default 587),
+  #   #   PULSEWATCH_SMTP_USER, PULSEWATCH_SMTP_PASSWORD
 """
 
 

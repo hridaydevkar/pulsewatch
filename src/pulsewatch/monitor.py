@@ -11,7 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from pulsewatch.database import SessionLocal
 from pulsewatch.models import Service, PingLog, Incident
-from pulsewatch.alerts import send_alert, down_message, up_message
+from pulsewatch.alerts import build_channels, send_alert, down_message, up_message
 
 # Re-exported so `from pulsewatch.monitor import load_config` keeps working.
 from pulsewatch.config import load_config  # noqa: F401
@@ -35,7 +35,7 @@ def sync_services_from_config(config):
         db.close()
 
 
-def check_service(service_id: int, webhook_url: str):
+def check_service(service_id: int, channels):
     db = SessionLocal()
     try:
         service = db.query(Service).filter_by(id=service_id).first()
@@ -77,7 +77,7 @@ def check_service(service_id: int, webhook_url: str):
                 if open_incident:
                     open_incident.resolved_at = datetime.now(timezone.utc)
                     open_incident.is_resolved = True
-                    send_alert(webhook_url, up_message(service.name, open_incident.duration_seconds))
+                    send_alert(channels, up_message(service.name, open_incident.duration_seconds))
 
             service.consecutive_failures = 0
             service.is_up = True
@@ -86,7 +86,7 @@ def check_service(service_id: int, webhook_url: str):
             if service.consecutive_failures >= service.failure_threshold and service.is_up:
                 service.is_up = False
                 db.add(Incident(service_id=service.id))
-                send_alert(webhook_url, down_message(service.name, error or "unknown error"))
+                send_alert(channels, down_message(service.name, error or "unknown error"))
 
         db.commit()
     finally:
@@ -99,14 +99,14 @@ def start_scheduler(config):
     services = db.query(Service).all()
     db.close()
 
-    webhook_url = config.get("discord_webhook_url", "")
+    channels = build_channels(config)
 
     for service in services:
         scheduler.add_job(
             check_service,
             "interval",
             seconds=service.check_interval_seconds,
-            args=[service.id, webhook_url],
+            args=[service.id, channels],
             id=f"check_{service.id}",
             next_run_time=datetime.now(),  # run once immediately on startup
         )

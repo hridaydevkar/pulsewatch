@@ -22,7 +22,8 @@ thresholds (so one blip doesn't page you), incident tracking, and alerting.
   check interval and failure threshold
 - Automatic incident creation when a service crosses its failure threshold,
   and automatic resolution on recovery
-- Discord webhook alerts on both down and recovery events
+- Pluggable alert channels (Discord, Slack, email) on both down and recovery
+  events — enable as many as you like
 - Live dashboard (`/`) showing current status, 24h uptime %, and incident
   history
 - JSON API (`/api/status`, `/api/services/{id}/history`) for scripting or
@@ -81,15 +82,46 @@ services:
     check_interval_seconds: 30
     failure_threshold: 3
 
-discord_webhook_url: "https://discord.com/api/webhooks/..."
+alerts:
+  - type: discord
+    webhook_url: "https://discord.com/api/webhooks/..."
+  - type: slack
+    webhook_url: "https://hooks.slack.com/services/..."
+  - type: email
+    to: "oncall@example.com"
+    from: "pulsewatch@example.com"     # optional; defaults to the SMTP user
 ```
 
 `failure_threshold` is how many consecutive failed checks are needed before
 an incident opens — this avoids firing an alert on a single network blip.
 
-To get a Discord webhook URL: Server Settings → Integrations → Webhooks →
-New Webhook → Copy URL. Leave it blank to just log alerts to the console
-instead.
+## Alert channels
+
+Both down and recovery events are sent to every channel in the `alerts:` list.
+With no channels enabled, alerts are logged to the console — so the project
+still runs and is demoable with zero setup.
+
+| Type      | Config keys                     | Notes                                             |
+|-----------|---------------------------------|---------------------------------------------------|
+| `discord` | `webhook_url`                   | Server Settings → Integrations → Webhooks → New   |
+| `slack`   | `webhook_url`                   | A Slack [Incoming Webhook](https://api.slack.com/messaging/webhooks) URL |
+| `email`   | `to`, `from` (optional)         | SMTP server/credentials come from env vars (below) |
+
+Email keeps secrets out of `config.yaml` by reading the SMTP connection from
+the environment:
+
+| Variable                   | Default | Purpose                              |
+|----------------------------|---------|--------------------------------------|
+| `PULSEWATCH_SMTP_HOST`     | —       | SMTP server (required to send email) |
+| `PULSEWATCH_SMTP_PORT`     | `587`   | SMTP port                            |
+| `PULSEWATCH_SMTP_USER`     | —       | Username (enables login if set)      |
+| `PULSEWATCH_SMTP_PASSWORD` | —       | Password (enables login if set)      |
+| `PULSEWATCH_SMTP_FROM`     | user    | Fallback From address                |
+| `PULSEWATCH_SMTP_STARTTLS` | `true`  | Set `false` to disable STARTTLS      |
+
+To add a channel of your own, subclass `AlertChannel` in
+[alerts.py](src/pulsewatch/alerts.py), implement `send(message)`, and register
+it in `_CHANNEL_BUILDERS`.
 
 ## Demoing the failure/recovery flow
 
@@ -113,14 +145,14 @@ src/pulsewatch/
 ├── monitor.py    # scheduler: pings services, manages incident state
 ├── models.py     # Service / PingLog / Incident tables
 ├── database.py   # SQLite engine + session
-├── alerts.py     # Discord webhook sending
+├── alerts.py     # pluggable alert channels (Discord / Slack / email)
 └── static/
     └── dashboard.html
 ```
 
 ## Possible extensions
 
-- Email/SMS alerting in addition to Discord
+- SMS / PagerDuty / webhook alert channels (drop-in `AlertChannel` subclasses)
 - Multi-region checks (ping from more than one location)
 - Public-facing read-only status page (auth-gated admin view)
 - Response time graphing over time, not just uptime %
