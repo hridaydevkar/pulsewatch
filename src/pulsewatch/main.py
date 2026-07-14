@@ -199,10 +199,10 @@ def dashboard(request: Request):
                 "duration_min": round(inc.duration_seconds / 60, 1),
             })
 
-        return templates.TemplateResponse("dashboard.html", {
-            "request": request,
-            "services": service_data,
-            "incidents": incident_data,
-        })
+        return templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {"services": service_data, "incidents": incident_data},
+        )
     finally:
         db.close()

@@ -9,6 +9,7 @@ TestClient *without* the context manager, which deliberately skips lifespan.
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -57,7 +58,8 @@ def seeded_client(monkeypatch):
     session.close()
 
     # No `with`: lifespan (scheduler/config/real DB) is intentionally not run.
-    return TestClient(main.app), service_id
+    yield TestClient(main.app), service_id
+    engine.dispose()
 
 
 def _get_points(client, service_id, **params):
@@ -135,7 +137,11 @@ def test_lifespan_starts_and_stops_scheduler(monkeypatch):
     monkeypatch.setattr(main, "sync_services_from_config", sync)
     monkeypatch.setattr(main, "start_scheduler", start)
     # Keep create_all + the column migration off disk / off the real uptime.db.
-    monkeypatch.setattr(main, "engine", create_engine("sqlite://"))
+    # StaticPool = one shared connection, so dispose() reliably closes it even
+    # though the lifespan runs in TestClient's portal thread.
+    test_engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    monkeypatch.setattr(main, "engine", test_engine)
     monkeypatch.setattr(main, "ensure_service_columns", MagicMock())
 
     with TestClient(main.app):  # __enter__ runs lifespan startup
@@ -147,3 +153,107 @@ def test_lifespan_starts_and_stops_scheduler(monkeypatch):
 
     # __exit__ runs lifespan shutdown
     fake_scheduler.shutdown.assert_called_once()
+    test_engine.dispose()
+
+
+# --- /api/status, /api/services/{id}/history, and the dashboard -----------
+
+@pytest.fixture
+def multi_client(monkeypatch):
+    """A TestClient over an isolated DB with a healthy http service and a
+    down database dependency (whose connection string carries a secret)."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    monkeypatch.setattr(main, "SessionLocal", TestSession)
+
+    session = TestSession()
+    session.add(Service(name="My API", url="http://api.local/health",
+                        check_type="http", is_up=True))
+    session.add(Service(
+        name="Primary DB", check_type="dependency", dependency_kind="database",
+        check_config={"connection_string": "postgresql://u:secret@db.internal:5432/prod"},
+        is_up=False,
+    ))
+    session.commit()
+    session.close()
+    yield TestClient(main.app)
+    engine.dispose()
+
+
+def test_api_status_lists_services_with_dependency_fields(multi_client):
+    resp = multi_client.get("/api/status")
+    assert resp.status_code == 200
+    services = {s["name"]: s for s in resp.json()["services"]}
+
+    api = services["My API"]
+    assert api["check_type"] == "http"
+    assert api["is_up"] is True
+    assert api["target"] == "http://api.local/health"
+    assert api["uptime_24h_pct"] == 100.0  # no pings -> defaults to 100
+
+    db = services["Primary DB"]
+    assert db["check_type"] == "dependency"
+    assert db["dependency_kind"] == "database"
+    assert db["is_up"] is False
+
+
+def test_api_status_never_leaks_db_credentials(multi_client):
+    db = {s["name"]: s for s in multi_client.get("/api/status").json()["services"]}["Primary DB"]
+    assert "secret" not in db["target"]
+    assert "secret" not in (db["url"] or "")
+    assert db["target"] == "postgresql://db.internal:5432/prod"
+
+
+def test_api_history_returns_pings_newest_first(seeded_client):
+    client, sid = seeded_client
+    logs = client.get(f"/api/services/{sid}/history").json()
+    assert len(logs) == 4  # the fixture seeds four pings
+    times = [l["timestamp"] for l in logs]
+    assert times == sorted(times, reverse=True)  # newest first
+    for entry in logs:
+        assert set(entry) >= {"timestamp", "success", "status_code",
+                              "response_time_ms", "error"}
+
+
+def test_api_history_respects_limit(seeded_client):
+    client, sid = seeded_client
+    logs = client.get(f"/api/services/{sid}/history", params={"limit": 2}).json()
+    assert len(logs) == 2
+
+
+def test_display_target_is_safe_for_every_kind():
+    from pulsewatch.main import display_target
+
+    def s(**kw):
+        kw.setdefault("url", None)
+        kw.setdefault("dependency_kind", None)
+        kw.setdefault("check_config", None)
+        return SimpleNamespace(**kw)
+
+    assert display_target(s(check_type="http", url="http://x")) == "http://x"
+    assert display_target(s(check_type="dependency", dependency_kind="aws_status",
+                            check_config={"region": "us-east-1", "services": ["EC2", "S3"]})) \
+        == "AWS · us-east-1 · EC2, S3"
+    assert display_target(s(check_type="dependency", dependency_kind="aws_status",
+                            check_config={"region": "eu-west-1"})) == "AWS · eu-west-1"
+    assert display_target(s(check_type="dependency", dependency_kind="custom_api",
+                            url="https://status.example/api")) == "https://status.example/api"
+    # credentials stripped from the database target
+    assert display_target(s(check_type="dependency", dependency_kind="database",
+                            check_config={"connection_string": "mysql://u:pw@h:3306/db"})) \
+        == "mysql://h:3306/db"
+
+
+def test_dashboard_renders_html_with_service_badge(seeded_client):
+    client, _ = seeded_client
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Seeded" in resp.text                       # the service name
+    assert '<span class="tag svc">service</span>' in resp.text
+    assert 'canvas class="spark"' in resp.text         # sparkline wired in

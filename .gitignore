@@ -4,8 +4,17 @@ __pycache__/
 uptime.db
 .env
 
+# local config with real secrets — copy config.example.yaml to config.yaml
+config.yaml
+
 # packaging / build artifacts
 build/
 dist/
 *.egg-info/
 .eggs/
+
+# test / coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

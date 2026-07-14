@@ -6,12 +6,14 @@ Uses an isolated in-memory DB (monitor.SessionLocal monkeypatched) and mocks
 run_check / send_alert so nothing hits the network.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from pulsewatch import monitor
+from pulsewatch import checks, monitor
 from pulsewatch.alerts import down_message, up_message
 from pulsewatch.checks import CheckResult
 from pulsewatch.database import Base
@@ -28,7 +30,8 @@ def Session(monkeypatch):
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
     monkeypatch.setattr(monitor, "SessionLocal", factory)
-    return factory
+    yield factory
+    engine.dispose()
 
 
 # --- sync_services_from_config -------------------------------------------
@@ -154,3 +157,88 @@ def test_up_message_wording():
     assert "Your service" in up_message("My API", 120)
     dep = up_message("AWS us-east-1", 120, is_dependency=True)
     assert "Upstream dependency" in dep and "recovered" in dep
+
+
+# --- incident state machine driven through a mocked httpx client ----------
+# These exercise the *real* run_check -> http_check -> httpx.get path with the
+# network mocked at pulsewatch.checks.httpx, verifying threshold behaviour end
+# to end rather than stubbing run_check.
+
+def _http_response(status_code):
+    resp = MagicMock()
+    resp.status_code = status_code
+    return resp
+
+
+def _state(Session, sid):
+    session = Session()
+    try:
+        svc = session.get(Service, sid)
+        open_incidents = session.query(Incident).filter_by(
+            service_id=sid, is_resolved=False).count()
+        total_incidents = session.query(Incident).filter_by(service_id=sid).count()
+        return svc.is_up, svc.consecutive_failures, open_incidents, total_incidents
+    finally:
+        session.close()
+
+
+def test_incident_opens_only_after_threshold_consecutive_failures(Session, monkeypatch):
+    sid = _seed(Session, name="API", url="http://api.local", check_type="http", threshold=3)
+    sent = []
+    monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: sent.append(msg))
+
+    with patch.object(checks.httpx, "get", return_value=_http_response(500)) as get:
+        # First two failures: counter climbs but no incident, still "up".
+        monitor.check_service(sid, channels=[])
+        assert _state(Session, sid) == (True, 1, 0, 0)
+        monitor.check_service(sid, channels=[])
+        assert _state(Session, sid) == (True, 2, 0, 0)
+
+        # Third consecutive failure crosses the threshold: incident opens, down.
+        monitor.check_service(sid, channels=[])
+        assert _state(Session, sid) == (False, 3, 1, 1)
+
+        # Further failures don't open duplicate incidents.
+        monitor.check_service(sid, channels=[])
+        assert _state(Session, sid) == (False, 4, 1, 1)
+
+    assert get.call_count == 4                       # httpx was really driven
+    assert len(sent) == 1 and "is DOWN" in sent[0]   # alerted once, on open
+
+
+def test_single_failure_then_recovery_opens_no_incident(Session, monkeypatch):
+    sid = _seed(Session, name="API", url="http://api.local", check_type="http", threshold=3)
+    monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: None)
+
+    with patch.object(checks.httpx, "get", return_value=_http_response(500)):
+        monitor.check_service(sid, channels=[])       # one blip
+    with patch.object(checks.httpx, "get", return_value=_http_response(200)):
+        monitor.check_service(sid, channels=[])       # recovers
+
+    # A single blip below threshold never opens an incident, counter resets.
+    assert _state(Session, sid) == (True, 0, 0, 0)
+
+
+def test_incident_resolves_on_recovery(Session, monkeypatch):
+    sid = _seed(Session, name="API", url="http://api.local", check_type="http", threshold=2)
+    sent = []
+    monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: sent.append(msg))
+
+    with patch.object(checks.httpx, "get", return_value=_http_response(503)):
+        monitor.check_service(sid, channels=[])
+        monitor.check_service(sid, channels=[])       # opens incident
+    assert _state(Session, sid) == (False, 2, 1, 1)
+
+    with patch.object(checks.httpx, "get", return_value=_http_response(200)):
+        monitor.check_service(sid, channels=[])       # recovery
+
+    is_up, failures, open_incidents, total = _state(Session, sid)
+    assert (is_up, failures, open_incidents, total) == (True, 0, 0, 1)
+
+    session = Session()
+    inc = session.query(Incident).filter_by(service_id=sid).one()
+    assert inc.is_resolved is True and inc.resolved_at is not None
+    session.close()
+
+    assert any("is DOWN" in m for m in sent)
+    assert any("RECOVERED" in m for m in sent)

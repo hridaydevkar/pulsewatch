@@ -1,3 +1,6 @@
+# Copy this file to config.yaml and fill in your own values:
+#   cp config.example.yaml config.yaml
+#
 # List the services you want to monitor here.
 # check_interval_seconds: how often to ping this service
 # failure_threshold: consecutive failures before an incident is opened
@@ -43,12 +46,13 @@ services:
   #   failure_threshold: 2
 
 # Alert channels: one block per destination to notify on down/recovery events.
-# With none enabled, alerts are just logged to the console.
-alerts: 
-  - type: discord
-    webhook_url: "https://discord.com/api/webhooks/1524373554013929512/dtANrJBkWR5R25EFBIA_j6f4gFrnYvMCQ6PeYXNYivrNNxna0lqQGHdlZYO4ow8uACiy"
+# With none enabled, alerts are just logged to the console. Uncomment a block
+# and drop in your own webhook URL / email to enable it.
+alerts: []
+  # - type: discord
+  #   webhook_url: "https://discord.com/api/webhooks/000000000000000000/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
   # - type: slack
-  #   webhook_url: "https://hooks.slack.com/services/..."
+  #   webhook_url: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
   # - type: email
   #   to: "oncall@example.com"
   #   from: "pulsewatch@example.com"    # optional; defaults to the SMTP user

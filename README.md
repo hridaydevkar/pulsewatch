@@ -1,5 +1,8 @@
 # pulsewatch
 
+[![tests](https://github.com/hridaydevkar/pulsewatch/actions/workflows/test.yml/badge.svg)](https://github.com/hridaydevkar/pulsewatch/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/hridaydevkar/pulsewatch/branch/main/graph/badge.svg)](https://codecov.io/gh/hridaydevkar/pulsewatch)
+
 A self-hosted uptime & status-page tool. Pings the services you configure on
 their own schedule, tracks response history, opens/resolves incidents
 automatically, and alerts you on Discord the moment something goes down —
@@ -50,6 +53,15 @@ the full help menu:
 pulsewatch --help
 ```
 
+Then copy the example config and fill in your own values (webhook URLs, etc.):
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+`config.yaml` is gitignored, so your real webhook URLs and connection strings
+never get committed — keep secrets there, not in `config.example.yaml`.
+
 ## The CLI
 
 ```bash
@@ -72,8 +84,8 @@ Then open http://127.0.0.1:8000
 
 ## Configuring services
 
-You can hand-edit `config.yaml` or use `pulsewatch add`. pulsewatch looks for
-config in this order:
+Start from the committed template (`cp config.example.yaml config.yaml`), then
+hand-edit it or use `pulsewatch add`. pulsewatch looks for config in this order:
 
 1. `./config.yaml` (the current working directory)
 2. `~/.pulsewatch/config.yaml` (per-user fallback)
@@ -205,6 +217,25 @@ src/pulsewatch/
 └── static/
     └── dashboard.html
 ```
+
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest                                    # run the suite
+pytest --cov=pulsewatch --cov-report=term-missing   # with coverage
+```
+
+The suite mocks all external I/O (httpx, SMTP, DB engines), so it runs offline
+and deterministically — no real calls to AWS, databases, or the network. It
+covers the incident state machine (threshold + recovery), every check type and
+alert channel, the API endpoints (via FastAPI's `TestClient`), and app
+startup/shutdown. GitHub Actions runs it on every push and pull request
+([test.yml](.github/workflows/test.yml)) on Python 3.11 and uploads coverage to
+Codecov.
+
+> The Codecov badge needs a one-time (free) sign-in at codecov.io with your
+> GitHub account to activate for this repo; CI passes regardless.
 
 ## Possible extensions
 
