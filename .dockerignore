@@ -1,0 +1,14 @@
+# keep the build context small and secrets/artifacts out of the image
+venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+*.db
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+tests/
+# local config carries real secrets — never bake it into the image
+config.yaml

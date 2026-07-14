@@ -62,6 +62,44 @@ cp config.example.yaml config.yaml
 `config.yaml` is gitignored, so your real webhook URLs and connection strings
 never get committed — keep secrets there, not in `config.example.yaml`.
 
+## Run with Docker
+
+As an alternative to the pip install above, you can run pulsewatch in a
+container. You only need Docker — no local Python.
+
+```bash
+cp config.example.yaml config.yaml   # create your config first (edit as needed)
+docker compose up -d                 # build the image and start the app
+```
+
+Then open http://localhost:8000. The dashboard and API are served on port 8000.
+
+- **Config** is bind-mounted from your local `config.yaml` (read-only). Edit it
+  on the host and `docker compose restart` to pick up changes.
+- **The SQLite database persists** across restarts and rebuilds in the
+  `pulsewatch-data` named volume — your ping history and incidents survive
+  `docker compose restart` / `up` / `down`. (Use `docker compose down -v` to
+  also wipe the data volume.)
+
+```bash
+docker compose logs -f     # follow logs
+docker compose down        # stop (keeps the data volume)
+```
+
+Prefer plain Docker? The equivalent without Compose:
+
+```bash
+docker build -t pulsewatch .
+docker run -d --name pulsewatch -p 8000:8000 \
+  -v "$PWD/config.yaml":/data/config.yaml:ro,z \
+  -v pulsewatch-data:/data \
+  pulsewatch
+```
+
+> `config.yaml` must exist before you start the container — otherwise Docker
+> creates an empty directory in its place. The `,z` on the config mount relabels
+> it for SELinux hosts (Fedora/RHEL) and is a harmless no-op elsewhere.
+
 ## The CLI
 
 ```bash
@@ -205,6 +243,9 @@ appear — then watch it self-resolve once a check succeeds again.
 
 ```
 pyproject.toml            # packaging, dependencies, `pulsewatch` entry point
+Dockerfile                # slim-Python image running `pulsewatch serve`
+docker-compose.yml        # app + config mount + persistent DB volume on :8000
+config.example.yaml       # copy to config.yaml and fill in your values
 src/pulsewatch/
 ├── cli.py        # click CLI: init / serve / add
 ├── config.py     # config discovery (CWD → ~/.pulsewatch) + default template

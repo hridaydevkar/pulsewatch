@@ -1,0 +1,18 @@
+services:
+  pulsewatch:
+    build: .
+    image: pulsewatch:latest
+    container_name: pulsewatch
+    ports:
+      - "8000:8000"          # dashboard + API at http://localhost:8000
+    volumes:
+      # your local config (copy config.example.yaml to config.yaml first).
+      # read-only: edit it on the host and restart to pick up changes.
+      # ':z' relabels for SELinux hosts (Fedora/RHEL); a harmless no-op elsewhere.
+      - ./config.yaml:/data/config.yaml:ro,z
+      # named volume for the SQLite DB so history/incidents survive restarts.
+      - pulsewatch-data:/data
+    restart: unless-stopped
+
+volumes:
+  pulsewatch-data:
