@@ -165,10 +165,16 @@ def send_alert(channels, message: str) -> None:
         channel.send(message)
 
 
-def down_message(service_name: str, error: str) -> str:
-    return f"🔴 **{service_name}** is DOWN. Error: {error}"
+def down_message(service_name: str, error: str, is_dependency: bool = False) -> str:
+    if is_dependency:
+        return f"⚠️ Upstream dependency **{service_name}** is degraded. {error}"
+    return f"🔴 Your service **{service_name}** is DOWN. Error: {error}"
 
 
-def up_message(service_name: str, duration_seconds: float) -> str:
+def up_message(service_name: str, duration_seconds: float,
+               is_dependency: bool = False) -> str:
     minutes = round(duration_seconds / 60, 1)
-    return f"🟢 **{service_name}** has RECOVERED. Was down for {minutes} minute(s)."
+    if is_dependency:
+        return (f"✅ Upstream dependency **{service_name}** has recovered. "
+                f"Was degraded for {minutes} minute(s).")
+    return f"🟢 Your service **{service_name}** has RECOVERED. Was down for {minutes} minute(s)."

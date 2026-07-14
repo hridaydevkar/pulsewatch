@@ -8,7 +8,7 @@ Three tables:
 """
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from pulsewatch.database import Base
 
@@ -43,15 +43,25 @@ class Service(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
-    url = Column(String)
+    url = Column(String, nullable=True)  # nullable: dependency checks may not ping a URL
     check_interval_seconds = Column(Integer, default=30)
     failure_threshold = Column(Integer, default=3)
+
+    # "http" (default) pings `url`; "dependency" runs a dependency_kind checker
+    # (aws_status / database / custom_api) whose extra settings live in check_config.
+    check_type = Column(String, default="http")
+    dependency_kind = Column(String, nullable=True)
+    check_config = Column(JSON, nullable=True)
 
     consecutive_failures = Column(Integer, default=0)
     is_up = Column(Boolean, default=True)
 
     pings = relationship("PingLog", back_populates="service")
     incidents = relationship("Incident", back_populates="service")
+
+    @property
+    def is_dependency(self) -> bool:
+        return self.check_type == "dependency"
 
 
 class PingLog(Base):

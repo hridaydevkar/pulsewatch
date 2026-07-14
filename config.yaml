@@ -13,6 +13,35 @@ services:
     check_interval_seconds: 30
     failure_threshold: 3
 
+  # --- upstream dependencies (check_type: dependency); uncomment to use ---
+
+  # AWS region health — down only if your region/services are impacted:
+  # - name: "AWS us-east-1"
+  #   check_type: dependency
+  #   dependency_kind: aws_status
+  #   region: "us-east-1"
+  #   services: ["EC2", "S3"]        # optional; omit to match any service in the region
+  #   check_interval_seconds: 300
+  #   failure_threshold: 1
+
+  # Database connectivity (runs SELECT 1; install the driver, e.g. psycopg2-binary):
+  # - name: "Primary Postgres"
+  #   check_type: dependency
+  #   dependency_kind: database
+  #   connection_string: "postgresql://user:pass@localhost:5432/mydb"
+  #   check_interval_seconds: 60
+  #   failure_threshold: 2
+
+  # Third-party API status field (Stripe: down unless indicator == none):
+  # - name: "Stripe API"
+  #   check_type: dependency
+  #   dependency_kind: custom_api
+  #   url: "https://status.stripe.com/api/v2/status.json"
+  #   json_field: "status.indicator"
+  #   expected_value: "none"
+  #   check_interval_seconds: 120
+  #   failure_threshold: 2
+
 # Alert channels: one block per destination to notify on down/recovery events.
 # With none enabled, alerts are just logged to the console.
 alerts: 

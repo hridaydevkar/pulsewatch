@@ -134,8 +134,9 @@ def test_lifespan_starts_and_stops_scheduler(monkeypatch):
     monkeypatch.setattr(main, "load_config", load)
     monkeypatch.setattr(main, "sync_services_from_config", sync)
     monkeypatch.setattr(main, "start_scheduler", start)
-    # Keep create_all off disk / off the real uptime.db.
+    # Keep create_all + the column migration off disk / off the real uptime.db.
     monkeypatch.setattr(main, "engine", create_engine("sqlite://"))
+    monkeypatch.setattr(main, "ensure_service_columns", MagicMock())
 
     with TestClient(main.app):  # __enter__ runs lifespan startup
         load.assert_called_once()

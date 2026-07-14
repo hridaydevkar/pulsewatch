@@ -98,6 +98,26 @@
       word-break: break-all;
     }
 
+    .tag {
+      display: inline-block;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    .tag.svc { background: rgba(125,134,140,0.16); color: var(--dim); }
+    .tag.dep { background: rgba(245,166,35,0.16); color: var(--amber); }
+    .tag-kind {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      color: var(--dim);
+      margin-left: 6px;
+    }
+
     .dot {
       width: 8px; height: 8px;
       border-radius: 50%;
@@ -205,8 +225,16 @@
       <div class="card {{ 'up' if s.is_up else 'down' }}">
         <div class="card-top">
           <div>
-            <div class="card-name">{{ s.name }}</div>
-            <div class="card-url">{{ s.url }}</div>
+            <div class="card-name">
+              {{ s.name }}
+              {% if s.is_dependency %}
+                <span class="tag dep">dependency</span>
+                <span class="tag-kind">{{ s.kind }}</span>
+              {% else %}
+                <span class="tag svc">service</span>
+              {% endif %}
+            </div>
+            <div class="card-url">{{ s.target }}</div>
           </div>
           <div class="dot {{ 'up' if s.is_up else 'down' }}"></div>
         </div>

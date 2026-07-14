@@ -20,6 +20,9 @@ thresholds (so one blip doesn't page you), incident tracking, and alerting.
 
 - Configurable list of services to monitor (`config.yaml`), each with its own
   check interval and failure threshold
+- Monitor upstream **dependencies** as well as your own services: AWS region
+  health, database connectivity (`SELECT 1`), or any third-party status API —
+  the dashboard and alerts make clear which failures are yours vs an upstream's
 - Automatic incident creation when a service crosses its failure threshold,
   and automatic resolution on recovery
 - Pluggable alert channels (Discord, Slack, email) on both down and recovery
@@ -95,6 +98,58 @@ alerts:
 `failure_threshold` is how many consecutive failed checks are needed before
 an incident opens — this avoids firing an alert on a single network blip.
 
+## Monitoring upstream dependencies
+
+Every service defaults to `check_type: http` (a plain URL ping, unchanged). Set
+`check_type: dependency` with a `dependency_kind` to watch an upstream provider
+instead. These are tagged `DEPENDENCY` on the dashboard and alert as *"Upstream
+dependency … is degraded"* rather than *"Your service is down"*, so you can tell
+your own outage from a provider's at a glance.
+
+**`aws_status`** — polls the public AWS Health feed
+(`https://health.aws.amazon.com/public/currentevents`) and reports down **only**
+if your region (and optionally specific services) are impacted, not on any AWS
+event anywhere. `region` is required; `services` is an optional filter.
+
+```yaml
+  - name: "AWS us-east-1"
+    check_type: dependency
+    dependency_kind: aws_status
+    region: "us-east-1"
+    services: ["EC2", "S3"]     # optional
+    failure_threshold: 1
+```
+
+**`database`** — runs a lightweight `SELECT 1` over a SQLAlchemy connection
+string instead of an HTTP request. Install the matching driver for your DB
+(e.g. `psycopg2-binary` for Postgres, `PyMySQL` for MySQL; SQLite needs none).
+Credentials are never shown on the dashboard or API — the target is redacted to
+`scheme://host/db`.
+
+```yaml
+  - name: "Primary Postgres"
+    check_type: dependency
+    dependency_kind: database
+    connection_string: "postgresql://user:pass@localhost:5432/mydb"
+```
+
+**`custom_api`** — fetches a JSON endpoint and asserts a nested field equals an
+expected value (dotted path), not just the HTTP status. Great for a provider's
+own status API (e.g. Stripe is healthy when `status.indicator == "none"`).
+
+```yaml
+  - name: "Stripe API"
+    check_type: dependency
+    dependency_kind: custom_api
+    url: "https://status.stripe.com/api/v2/status.json"
+    json_field: "status.indicator"
+    expected_value: "none"
+```
+
+To add a new dependency kind, write a checker in
+[checks.py](src/pulsewatch/checks.py) returning a `CheckResult` and register it
+in `DEPENDENCY_CHECKERS`.
+
 ## Alert channels
 
 Both down and recovery events are sent to every channel in the `alerts:` list.
@@ -142,7 +197,8 @@ src/pulsewatch/
 ├── cli.py        # click CLI: init / serve / add
 ├── config.py     # config discovery (CWD → ~/.pulsewatch) + default template
 ├── main.py       # FastAPI routes, dashboard rendering, startup wiring
-├── monitor.py    # scheduler: pings services, manages incident state
+├── monitor.py    # scheduler: runs checks, manages incident state
+├── checks.py     # pluggable checks (http / aws_status / database / custom_api)
 ├── models.py     # Service / PingLog / Incident tables
 ├── database.py   # SQLite engine + session
 ├── alerts.py     # pluggable alert channels (Discord / Slack / email)
@@ -153,7 +209,7 @@ src/pulsewatch/
 ## Possible extensions
 
 - SMS / PagerDuty / webhook alert channels (drop-in `AlertChannel` subclasses)
+- More dependency kinds (drop-in checkers in `DEPENDENCY_CHECKERS`)
 - Multi-region checks (ping from more than one location)
 - Public-facing read-only status page (auth-gated admin view)
-- Response time graphing over time, not just uptime %
 - Postgres support for multi-instance deployments

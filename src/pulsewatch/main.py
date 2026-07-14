@@ -9,6 +9,7 @@ FastAPI app exposing:
 Run with: pulsewatch serve   (or: uvicorn pulsewatch.main:app --reload)
 """
 
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from pulsewatch.config import load_config
-from pulsewatch.database import Base, engine, SessionLocal
+from pulsewatch.database import Base, engine, SessionLocal, ensure_service_columns
 from pulsewatch.models import Service, PingLog, Incident, as_utc
 from pulsewatch.monitor import sync_services_from_config, start_scheduler
 
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     background scheduler — only running the server does."""
     # startup: create tables, load config, sync services, start the scheduler
     Base.metadata.create_all(bind=engine)
+    ensure_service_columns()  # add dependency columns to a pre-existing DB
     config = load_config()
     sync_services_from_config(config)
     app.state.scheduler = start_scheduler(config)
@@ -46,6 +48,30 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Uptime Monitor", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(STATIC_DIR))
+
+
+def _redact_conn(conn: str) -> str:
+    """Strip user:pass@ from a DB connection string so credentials never reach
+    the dashboard or API."""
+    return re.sub(r"://[^@/]*@", "://", conn) if conn else ""
+
+
+def display_target(service) -> str:
+    """A short, credential-safe description of what a service checks."""
+    if service.check_type != "dependency":
+        return service.url or ""
+    cfg = service.check_config or {}
+    kind = service.dependency_kind
+    if kind == "aws_status":
+        region = cfg.get("region", "?")
+        services = cfg.get("services")
+        base = f"AWS · {region}"
+        return f"{base} · {', '.join(services)}" if services else base
+    if kind == "database":
+        return _redact_conn(cfg.get("connection_string", "")) or "database"
+    if kind == "custom_api":
+        return service.url or cfg.get("url", "")
+    return kind or "dependency"
 
 
 def compute_uptime_pct(db, service_id: int, window_hours: int = 24) -> float:
@@ -73,6 +99,9 @@ def api_status():
                 "url": s.url,
                 "is_up": s.is_up,
                 "uptime_24h_pct": compute_uptime_pct(db, s.id),
+                "check_type": s.check_type,
+                "dependency_kind": s.dependency_kind,
+                "target": display_target(s),
             })
         return {"services": result}
     finally:
@@ -148,9 +177,11 @@ def dashboard(request: Request):
             service_data.append({
                 "id": s.id,
                 "name": s.name,
-                "url": s.url,
+                "target": display_target(s),
                 "is_up": s.is_up,
                 "uptime_pct": compute_uptime_pct(db, s.id),
+                "is_dependency": s.check_type == "dependency",
+                "kind": s.dependency_kind if s.check_type == "dependency" else "service",
             })
 
         incidents = (
