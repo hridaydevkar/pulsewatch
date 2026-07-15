@@ -1,19 +1,22 @@
 """
-Tests for the click CLI (pulsewatch.cli): init / add / serve.
+Tests for the click CLI (pulsewatch.cli): init / add / serve / worker.
 
 CliRunner.isolated_filesystem gives each test a throwaway cwd, and
 config.USER_CONFIG_PATH is redirected to a non-existent temp path so the
 per-user config fallback can never interfere with the assertions.
 """
 
+import os
+import threading
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 from click.testing import CliRunner
 
-from pulsewatch import config
+from pulsewatch import cli, config
+from pulsewatch.config import configured_regions
 from pulsewatch.cli import main
 
 
@@ -110,3 +113,47 @@ def test_serve_invokes_uvicorn_with_import_string(runner):
     assert kwargs["host"] == "0.0.0.0"
     assert kwargs["port"] == 9999
     assert kwargs["reload"] is False
+
+
+def test_serve_passes_region_via_env(runner, monkeypatch):
+    monkeypatch.delenv("PULSEWATCH_REGION", raising=False)
+    seen = {}
+    # capture the env var at the moment serve hands off to uvicorn
+    monkeypatch.setattr("uvicorn.run",
+                        lambda *a, **k: seen.update(region=os.environ.get("PULSEWATCH_REGION")))
+    try:
+        result = runner.invoke(main, ["serve", "--region", "us-east"])
+        assert result.exit_code == 0
+        assert seen["region"] == "us-east"
+    finally:
+        os.environ.pop("PULSEWATCH_REGION", None)
+
+
+def test_worker_starts_scheduler_for_region_and_stops(monkeypatch):
+    import pulsewatch.database as database
+    import pulsewatch.monitor as monitor
+
+    fake_scheduler = MagicMock()
+    monkeypatch.setattr(cli, "load_config",
+                        lambda: {"services": [], "regions": [{"name": "us-east"}]})
+    # keep it off any real DB / scheduler
+    monkeypatch.setattr(database.Base.metadata, "create_all", lambda **k: None)
+    monkeypatch.setattr(database, "ensure_columns", lambda: None)
+    monkeypatch.setattr(monitor, "sync_services_from_config", lambda cfg: None)
+    monkeypatch.setattr(monitor, "start_scheduler",
+                        lambda cfg, region: fake_scheduler)
+    # make the block-forever loop return immediately
+    monkeypatch.setattr(threading.Event, "wait", lambda self, timeout=None: True)
+
+    result = CliRunner().invoke(main, ["worker", "--region", "us-east"])
+    assert result.exit_code == 0
+    assert "region 'us-east'" in result.output
+    fake_scheduler.shutdown.assert_called_once()
+
+
+def test_configured_regions():
+    assert configured_regions({"services": []}) == ["local"]        # default
+    assert configured_regions({"regions": []}) == ["local"]         # empty -> default
+    assert configured_regions(
+        {"regions": [{"name": "us-east"}, {"name": "eu-west"}]}) == ["us-east", "eu-west"]
+    assert configured_regions({"regions": ["plain-string"]}) == ["plain-string"]

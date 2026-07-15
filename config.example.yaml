@@ -59,3 +59,15 @@ alerts: []
   #   # SMTP host/port/credentials are read from environment variables:
   #   #   PULSEWATCH_SMTP_HOST, PULSEWATCH_SMTP_PORT (default 587),
   #   #   PULSEWATCH_SMTP_USER, PULSEWATCH_SMTP_PASSWORD
+
+# Regions: named check workers. Each region runs as its own process and reports
+# results tagged with its name to the shared database; the dashboard shows a
+# per-region breakdown once more than one region reports on a service. With no
+# regions declared, there's a single implicit "local" region.
+#
+# Run one worker process per region (all pointed at this same config/DB):
+#   pulsewatch serve  --region us-east      # web dashboard + the us-east worker
+#   pulsewatch worker --region eu-west      # an extra worker, no web server
+# regions:
+#   - name: "us-east"
+#   - name: "eu-west"

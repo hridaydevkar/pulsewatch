@@ -17,7 +17,19 @@ from pulsewatch import checks, monitor
 from pulsewatch.alerts import down_message, up_message
 from pulsewatch.checks import CheckResult
 from pulsewatch.database import Base
-from pulsewatch.models import Service, Incident
+from pulsewatch.models import Service, Incident, RegionStatus
+
+REGION = "local"  # default single-region name used by most tests
+
+
+def _status(Session, sid, region=REGION):
+    """The RegionStatus row for one (service, region), or None."""
+    session = Session()
+    try:
+        return (session.query(RegionStatus)
+                .filter_by(service_id=sid, region=region).first())
+    finally:
+        session.close()
 
 
 @pytest.fixture
@@ -94,13 +106,13 @@ def test_check_service_opens_dependency_incident_with_upstream_wording(Session, 
     sent = []
     monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: sent.append(msg))
 
-    monitor.check_service(sid, channels=[])
+    monitor.check_service(sid, REGION, channels=[])
 
-    # incident opened, service marked down
+    # incident opened, this region marked down
+    assert _status(Session, sid).is_up is False
     session = Session()
-    svc = session.get(Service, sid)
-    assert svc.is_up is False
-    assert session.query(Incident).filter_by(service_id=sid, is_resolved=False).count() == 1
+    assert session.query(Incident).filter_by(
+        service_id=sid, region=REGION, is_resolved=False).count() == 1
     session.close()
 
     # alert used upstream-dependency wording, not "your service"
@@ -116,7 +128,7 @@ def test_check_service_regular_service_uses_your_service_wording(Session, monkey
     sent = []
     monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: sent.append(msg))
 
-    monitor.check_service(sid, channels=[])
+    monitor.check_service(sid, REGION, channels=[])
 
     assert len(sent) == 1
     assert "Your service" in sent[0]
@@ -131,17 +143,43 @@ def test_check_service_recovery_sends_dependency_recovery(Session, monkeypatch):
 
     # go down, then recover
     monkeypatch.setattr(monitor, "run_check", lambda service: CheckResult(False, error="impacted"))
-    monitor.check_service(sid, channels=[])
+    monitor.check_service(sid, REGION, channels=[])
     monkeypatch.setattr(monitor, "run_check", lambda service: CheckResult(True))
-    monitor.check_service(sid, channels=[])
+    monitor.check_service(sid, REGION, channels=[])
 
+    assert _status(Session, sid).is_up is True
     session = Session()
-    svc = session.get(Service, sid)
-    assert svc.is_up is True
-    assert session.query(Incident).filter_by(service_id=sid, is_resolved=False).count() == 0
+    assert session.query(Incident).filter_by(
+        service_id=sid, region=REGION, is_resolved=False).count() == 0
     session.close()
 
     assert any("Upstream dependency" in m and "recovered" in m for m in sent)
+
+
+def test_check_service_tracks_regions_independently(Session, monkeypatch):
+    """Two regions checking the same service keep separate up/down state and
+    separate incidents; the alert for a non-default region is tagged with it."""
+    sid = _seed(Session, name="API", url="http://api", check_type="http", threshold=1)
+    sent = []
+    monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: sent.append(msg))
+
+    # us-east fails, eu-west succeeds
+    monkeypatch.setattr(monitor, "run_check", lambda s: CheckResult(False, error="HTTP 500"))
+    monitor.check_service(sid, "us-east", channels=[])
+    monkeypatch.setattr(monitor, "run_check", lambda s: CheckResult(True))
+    monitor.check_service(sid, "eu-west", channels=[])
+
+    assert _status(Session, sid, "us-east").is_up is False
+    assert _status(Session, sid, "eu-west").is_up is True
+
+    session = Session()
+    assert session.query(Incident).filter_by(service_id=sid, region="us-east").count() == 1
+    assert session.query(Incident).filter_by(service_id=sid, region="eu-west").count() == 0
+    session.close()
+
+    # the down alert carries the region tag
+    assert len(sent) == 1
+    assert "[region: us-east]" in sent[0]
 
 
 # --- alert wording --------------------------------------------------------
@@ -170,14 +208,19 @@ def _http_response(status_code):
     return resp
 
 
-def _state(Session, sid):
+def _state(Session, sid, region=REGION):
+    """(is_up, consecutive_failures, open_incidents, total_incidents) for a region."""
     session = Session()
     try:
-        svc = session.get(Service, sid)
+        st = (session.query(RegionStatus)
+              .filter_by(service_id=sid, region=region).first())
+        is_up = st.is_up if st else True
+        failures = st.consecutive_failures if st else 0
         open_incidents = session.query(Incident).filter_by(
-            service_id=sid, is_resolved=False).count()
-        total_incidents = session.query(Incident).filter_by(service_id=sid).count()
-        return svc.is_up, svc.consecutive_failures, open_incidents, total_incidents
+            service_id=sid, region=region, is_resolved=False).count()
+        total_incidents = session.query(Incident).filter_by(
+            service_id=sid, region=region).count()
+        return is_up, failures, open_incidents, total_incidents
     finally:
         session.close()
 
@@ -189,17 +232,17 @@ def test_incident_opens_only_after_threshold_consecutive_failures(Session, monke
 
     with patch.object(checks.httpx, "get", return_value=_http_response(500)) as get:
         # First two failures: counter climbs but no incident, still "up".
-        monitor.check_service(sid, channels=[])
+        monitor.check_service(sid, REGION, channels=[])
         assert _state(Session, sid) == (True, 1, 0, 0)
-        monitor.check_service(sid, channels=[])
+        monitor.check_service(sid, REGION, channels=[])
         assert _state(Session, sid) == (True, 2, 0, 0)
 
         # Third consecutive failure crosses the threshold: incident opens, down.
-        monitor.check_service(sid, channels=[])
+        monitor.check_service(sid, REGION, channels=[])
         assert _state(Session, sid) == (False, 3, 1, 1)
 
         # Further failures don't open duplicate incidents.
-        monitor.check_service(sid, channels=[])
+        monitor.check_service(sid, REGION, channels=[])
         assert _state(Session, sid) == (False, 4, 1, 1)
 
     assert get.call_count == 4                       # httpx was really driven
@@ -211,9 +254,9 @@ def test_single_failure_then_recovery_opens_no_incident(Session, monkeypatch):
     monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: None)
 
     with patch.object(checks.httpx, "get", return_value=_http_response(500)):
-        monitor.check_service(sid, channels=[])       # one blip
+        monitor.check_service(sid, REGION, channels=[])   # one blip
     with patch.object(checks.httpx, "get", return_value=_http_response(200)):
-        monitor.check_service(sid, channels=[])       # recovers
+        monitor.check_service(sid, REGION, channels=[])   # recovers
 
     # A single blip below threshold never opens an incident, counter resets.
     assert _state(Session, sid) == (True, 0, 0, 0)
@@ -225,15 +268,14 @@ def test_incident_resolves_on_recovery(Session, monkeypatch):
     monkeypatch.setattr(monitor, "send_alert", lambda channels, msg: sent.append(msg))
 
     with patch.object(checks.httpx, "get", return_value=_http_response(503)):
-        monitor.check_service(sid, channels=[])
-        monitor.check_service(sid, channels=[])       # opens incident
+        monitor.check_service(sid, REGION, channels=[])
+        monitor.check_service(sid, REGION, channels=[])   # opens incident
     assert _state(Session, sid) == (False, 2, 1, 1)
 
     with patch.object(checks.httpx, "get", return_value=_http_response(200)):
-        monitor.check_service(sid, channels=[])       # recovery
+        monitor.check_service(sid, REGION, channels=[])   # recovery
 
-    is_up, failures, open_incidents, total = _state(Session, sid)
-    assert (is_up, failures, open_incidents, total) == (True, 0, 0, 1)
+    assert _state(Session, sid) == (True, 0, 0, 1)
 
     session = Session()
     inc = session.query(Incident).filter_by(service_id=sid).one()

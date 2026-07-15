@@ -9,6 +9,7 @@ FastAPI app exposing:
 Run with: pulsewatch serve   (or: uvicorn pulsewatch.main:app --reload)
 """
 
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,9 +19,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from pulsewatch.config import load_config
-from pulsewatch.database import Base, engine, SessionLocal, ensure_service_columns
-from pulsewatch.models import Service, PingLog, Incident, as_utc
+from pulsewatch.config import load_config, DEFAULT_REGION, REGION_ENV
+from pulsewatch.database import Base, engine, SessionLocal, ensure_columns
+from pulsewatch.models import Service, PingLog, Incident, RegionStatus, as_utc
 from pulsewatch.monitor import sync_services_from_config, start_scheduler
 
 # Resolve static assets relative to this package, not the current working
@@ -33,12 +34,14 @@ async def lifespan(app: FastAPI):
     """App startup/shutdown. Kept out of import time so that importing this
     module (e.g. from tests) doesn't touch the DB, read config, or spin up the
     background scheduler — only running the server does."""
-    # startup: create tables, load config, sync services, start the scheduler
+    # startup: create tables, load config, sync services, start the worker.
+    # The built-in worker's region comes from `pulsewatch serve --region`.
+    region = os.environ.get(REGION_ENV, DEFAULT_REGION)
     Base.metadata.create_all(bind=engine)
-    ensure_service_columns()  # add dependency columns to a pre-existing DB
+    ensure_columns()  # add post-release columns to a pre-existing DB
     config = load_config()
     sync_services_from_config(config)
-    app.state.scheduler = start_scheduler(config)
+    app.state.scheduler = start_scheduler(config, region=region)
     try:
         yield
     finally:
@@ -74,17 +77,37 @@ def display_target(service) -> str:
     return kind or "dependency"
 
 
-def compute_uptime_pct(db, service_id: int, window_hours: int = 24) -> float:
+def compute_uptime_pct(db, service_id: int, window_hours: int = 24,
+                       region: str = None) -> float:
     since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
-    logs = (
-        db.query(PingLog)
-        .filter(PingLog.service_id == service_id, PingLog.timestamp >= since)
-        .all()
-    )
+    query = db.query(PingLog).filter(
+        PingLog.service_id == service_id, PingLog.timestamp >= since)
+    if region is not None:
+        query = query.filter(PingLog.region == region)
+    logs = query.all()
     if not logs:
         return 100.0
     successful = sum(1 for l in logs if l.success)
     return round((successful / len(logs)) * 100, 2)
+
+
+def region_reports(db, service):
+    """Per-region status for a service, one entry per region that has reported.
+
+    Returns (regions, overall_up): `regions` is sorted by name; `overall_up` is
+    True only if every reporting region is up (down anywhere -> down overall).
+    """
+    statuses = sorted(service.statuses, key=lambda st: st.region)
+    regions = [
+        {
+            "region": st.region,
+            "is_up": st.is_up,
+            "uptime_pct": compute_uptime_pct(db, service.id, region=st.region),
+        }
+        for st in statuses
+    ]
+    overall_up = all(r["is_up"] for r in regions) if regions else True
+    return regions, overall_up
 
 
 @app.get("/api/status")
@@ -94,14 +117,16 @@ def api_status():
         services = db.query(Service).all()
         result = []
         for s in services:
+            regions, overall_up = region_reports(db, s)
             result.append({
                 "name": s.name,
                 "url": s.url,
-                "is_up": s.is_up,
+                "is_up": overall_up,
                 "uptime_24h_pct": compute_uptime_pct(db, s.id),
                 "check_type": s.check_type,
                 "dependency_kind": s.dependency_kind,
                 "target": display_target(s),
+                "regions": regions,
             })
         return {"services": result}
     finally:
@@ -173,15 +198,22 @@ def dashboard(request: Request):
     try:
         services = db.query(Service).all()
         service_data = []
+        multi_region_anywhere = False
         for s in services:
+            regions, overall_up = region_reports(db, s)
+            if len(regions) > 1:
+                multi_region_anywhere = True
             service_data.append({
                 "id": s.id,
                 "name": s.name,
                 "target": display_target(s),
-                "is_up": s.is_up,
+                "is_up": overall_up,
                 "uptime_pct": compute_uptime_pct(db, s.id),
                 "is_dependency": s.check_type == "dependency",
                 "kind": s.dependency_kind if s.check_type == "dependency" else "service",
+                # per-region breakdown; template shows it only when >1 region.
+                "regions": regions,
+                "multi_region": len(regions) > 1,
             })
 
         incidents = (
@@ -194,6 +226,7 @@ def dashboard(request: Request):
         for inc in incidents:
             incident_data.append({
                 "service_name": inc.service.name,
+                "region": inc.region,
                 "started_at": inc.started_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
                 "resolved": inc.is_resolved,
                 "duration_min": round(inc.duration_seconds / 60, 1),
@@ -202,7 +235,12 @@ def dashboard(request: Request):
         return templates.TemplateResponse(
             request,
             "dashboard.html",
-            {"services": service_data, "incidents": incident_data},
+            {
+                "services": service_data,
+                "incidents": incident_data,
+                # show the region column in the incident table only if relevant
+                "show_regions": multi_region_anywhere,
+            },
         )
     finally:
         db.close()

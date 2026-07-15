@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 import pulsewatch.main as main
 from pulsewatch.database import Base
-from pulsewatch.models import Service, PingLog
+from pulsewatch.models import Service, PingLog, RegionStatus
 
 
 @pytest.fixture
@@ -133,6 +133,7 @@ def test_lifespan_starts_and_stops_scheduler(monkeypatch):
     sync = MagicMock()
     start = MagicMock(return_value=fake_scheduler)
 
+    monkeypatch.delenv("PULSEWATCH_REGION", raising=False)  # -> default "local"
     monkeypatch.setattr(main, "load_config", load)
     monkeypatch.setattr(main, "sync_services_from_config", sync)
     monkeypatch.setattr(main, "start_scheduler", start)
@@ -142,12 +143,12 @@ def test_lifespan_starts_and_stops_scheduler(monkeypatch):
     test_engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     monkeypatch.setattr(main, "engine", test_engine)
-    monkeypatch.setattr(main, "ensure_service_columns", MagicMock())
+    monkeypatch.setattr(main, "ensure_columns", MagicMock())
 
     with TestClient(main.app):  # __enter__ runs lifespan startup
         load.assert_called_once()
         sync.assert_called_once_with(cfg)
-        start.assert_called_once_with(cfg)
+        start.assert_called_once_with(cfg, region="local")
         assert main.app.state.scheduler is fake_scheduler
         fake_scheduler.shutdown.assert_not_called()
 
@@ -172,13 +173,16 @@ def multi_client(monkeypatch):
     monkeypatch.setattr(main, "SessionLocal", TestSession)
 
     session = TestSession()
-    session.add(Service(name="My API", url="http://api.local/health",
-                        check_type="http", is_up=True))
-    session.add(Service(
+    api = Service(name="My API", url="http://api.local/health", check_type="http")
+    db_dep = Service(
         name="Primary DB", check_type="dependency", dependency_kind="database",
         check_config={"connection_string": "postgresql://u:secret@db.internal:5432/prod"},
-        is_up=False,
-    ))
+    )
+    session.add_all([api, db_dep])
+    session.commit()
+    # per-region live status (single "local" region): API up, DB down
+    session.add(RegionStatus(service_id=api.id, region="local", is_up=True))
+    session.add(RegionStatus(service_id=db_dep.id, region="local", is_up=False))
     session.commit()
     session.close()
     yield TestClient(main.app)
@@ -207,6 +211,46 @@ def test_api_status_never_leaks_db_credentials(multi_client):
     assert "secret" not in db["target"]
     assert "secret" not in (db["url"] or "")
     assert db["target"] == "postgresql://db.internal:5432/prod"
+
+
+@pytest.fixture
+def multiregion_client(monkeypatch):
+    """One service reported on by two regions: us-east up, eu-west down."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    monkeypatch.setattr(main, "SessionLocal", TestSession)
+    session = TestSession()
+    svc = Service(name="Multi API", url="http://api.local", check_type="http")
+    session.add(svc)
+    session.commit()
+    session.add(RegionStatus(service_id=svc.id, region="us-east", is_up=True))
+    session.add(RegionStatus(service_id=svc.id, region="eu-west", is_up=False))
+    session.commit()
+    session.close()
+    yield TestClient(main.app)
+    engine.dispose()
+
+
+def test_api_status_reports_per_region(multiregion_client):
+    svc = multiregion_client.get("/api/status").json()["services"][0]
+    # down in one region -> overall down
+    assert svc["is_up"] is False
+    regions = {r["region"]: r["is_up"] for r in svc["regions"]}
+    assert regions == {"us-east": True, "eu-west": False}
+
+
+def test_dashboard_shows_region_breakdown_when_multiple(multiregion_client):
+    html = multiregion_client.get("/").text
+    assert "by region" in html          # the per-region section renders
+    assert "us-east" in html and "eu-west" in html
+
+
+def test_dashboard_no_region_breakdown_for_single_region(seeded_client):
+    # seeded_client seeds pings but no RegionStatus -> single/'no region' view
+    client, _ = seeded_client
+    assert "by region" not in client.get("/").text
 
 
 def test_api_history_returns_pings_newest_first(seeded_client):

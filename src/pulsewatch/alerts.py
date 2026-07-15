@@ -165,16 +165,26 @@ def send_alert(channels, message: str) -> None:
         channel.send(message)
 
 
-def down_message(service_name: str, error: str, is_dependency: bool = False) -> str:
+def _region_tag(region) -> str:
+    """A ` [region: X]` suffix, omitted for the default single-worker region."""
+    from pulsewatch.config import DEFAULT_REGION
+    return f" [region: {region}]" if region and region != DEFAULT_REGION else ""
+
+
+def down_message(service_name: str, error: str, is_dependency: bool = False,
+                 region: str = None) -> str:
+    tag = _region_tag(region)
     if is_dependency:
-        return f"⚠️ Upstream dependency **{service_name}** is degraded. {error}"
-    return f"🔴 Your service **{service_name}** is DOWN. Error: {error}"
+        return f"⚠️ Upstream dependency **{service_name}** is degraded{tag}. {error}"
+    return f"🔴 Your service **{service_name}** is DOWN{tag}. Error: {error}"
 
 
 def up_message(service_name: str, duration_seconds: float,
-               is_dependency: bool = False) -> str:
+               is_dependency: bool = False, region: str = None) -> str:
     minutes = round(duration_seconds / 60, 1)
+    tag = _region_tag(region)
     if is_dependency:
-        return (f"✅ Upstream dependency **{service_name}** has recovered. "
+        return (f"✅ Upstream dependency **{service_name}** has recovered{tag}. "
                 f"Was degraded for {minutes} minute(s).")
-    return f"🟢 Your service **{service_name}** has RECOVERED. Was down for {minutes} minute(s)."
+    return (f"🟢 Your service **{service_name}** has RECOVERED{tag}. "
+            f"Was down for {minutes} minute(s).")

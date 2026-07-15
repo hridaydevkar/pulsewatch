@@ -163,6 +163,33 @@
     .spark-wrap { position: relative; height: 44px; width: 100%; }
     canvas.spark { display: block; }
 
+    .regions {
+      margin-top: 14px;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+    .regions-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 6px;
+    }
+    .region-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      padding: 3px 0;
+    }
+    .region-row .dot { margin-top: 0; }
+    .region-name { flex: 1; color: var(--text); }
+    .region-up { color: var(--up); }
+    .region-down { color: var(--down); }
+    .region-uptime { color: var(--dim); }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -253,6 +280,22 @@
         <div class="spark-wrap">
           <canvas class="spark" data-service-id="{{ s.id }}"></canvas>
         </div>
+
+        {% if s.multi_region %}
+        <div class="regions">
+          <div class="regions-label">by region · {{ s.regions|length }} reporting</div>
+          {% for r in s.regions %}
+          <div class="region-row">
+            <span class="dot {{ 'up' if r.is_up else 'down' }}"></span>
+            <span class="region-name">{{ r.region }}</span>
+            <span class="{{ 'region-up' if r.is_up else 'region-down' }}">
+              {{ 'up' if r.is_up else 'down' }}
+            </span>
+            <span class="region-uptime">{{ r.uptime_pct }}%</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
@@ -265,6 +308,7 @@
       <thead>
         <tr>
           <th>Service</th>
+          {% if show_regions %}<th>Region</th>{% endif %}
           <th>Started</th>
           <th>Duration</th>
           <th>Status</th>
@@ -274,6 +318,7 @@
         {% for inc in incidents %}
         <tr>
           <td>{{ inc.service_name }}</td>
+          {% if show_regions %}<td class="mono">{{ inc.region }}</td>{% endif %}
           <td class="mono">{{ inc.started_at }}</td>
           <td class="mono">{{ inc.duration_min }} min</td>
           <td>

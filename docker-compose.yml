@@ -13,6 +13,20 @@ services:
       # named volume for the SQLite DB so history/incidents survive restarts.
       - pulsewatch-data:/data
     restart: unless-stopped
+    # For multi-region, name this server's built-in worker and declare the
+    # regions in config.yaml, then add worker containers like the one below:
+    # command: ["pulsewatch", "serve", "--host", "0.0.0.0", "--port", "8000", "--region", "us-east"]
+
+  # --- extra region worker (uncomment for multi-region) ---
+  # A second worker process, no web server, sharing the same config + DB volume.
+  # worker-eu-west:
+  #   build: .
+  #   image: pulsewatch:latest
+  #   command: ["pulsewatch", "worker", "--region", "eu-west"]
+  #   volumes:
+  #     - ./config.yaml:/data/config.yaml:ro,z
+  #     - pulsewatch-data:/data
+  #   restart: unless-stopped
 
 volumes:
   pulsewatch-data:

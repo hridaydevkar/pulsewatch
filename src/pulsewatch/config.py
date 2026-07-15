@@ -18,6 +18,11 @@ CONFIG_FILENAME = "config.yaml"
 USER_CONFIG_DIR = Path.home() / ".pulsewatch"
 USER_CONFIG_PATH = USER_CONFIG_DIR / CONFIG_FILENAME
 
+# Region name used when config declares no `regions:` (single-worker default).
+DEFAULT_REGION = "local"
+# Env var `pulsewatch serve` uses to pass its region to the app it launches.
+REGION_ENV = "PULSEWATCH_REGION"
+
 # The config written by `pulsewatch init`. Mirrors the shipped demo config so a
 # fresh install has something that immediately shows incidents opening/closing.
 DEFAULT_CONFIG = """\
@@ -83,6 +88,12 @@ alerts: []
   #   # SMTP host/port/credentials are read from environment variables:
   #   #   PULSEWATCH_SMTP_HOST, PULSEWATCH_SMTP_PORT (default 587),
   #   #   PULSEWATCH_SMTP_USER, PULSEWATCH_SMTP_PASSWORD
+
+# Regions: named check workers, each run as its own process (see README).
+# With none declared there's a single implicit "local" region.
+# regions:
+#   - name: "us-east"
+#   - name: "eu-west"
 """
 
 
@@ -116,3 +127,18 @@ def load_config(path=None):
             )
     with open(path, "r") as f:
         return yaml.safe_load(f)
+
+
+def configured_regions(config):
+    """Names of the check workers declared under `regions:` in config.
+
+    Each entry is a mapping with a `name`. Returns [DEFAULT_REGION] when none
+    are declared, so single-worker setups behave exactly as before.
+    """
+    regions = []
+    for entry in (config or {}).get("regions") or []:
+        if isinstance(entry, dict) and entry.get("name"):
+            regions.append(str(entry["name"]))
+        elif isinstance(entry, str):
+            regions.append(entry)
+    return regions or [DEFAULT_REGION]

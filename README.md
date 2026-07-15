@@ -228,6 +228,41 @@ To add a channel of your own, subclass `AlertChannel` in
 [alerts.py](src/pulsewatch/alerts.py), implement `send(message)`, and register
 it in `_CHANNEL_BUILDERS`.
 
+## Multiple regions
+
+You can check your services from several named **regions** — really just
+independent worker processes (there's no real geographic distribution). Each
+worker runs its own scheduler, tags every result with its region name, and
+writes to the one shared database; the dashboard shows a per-region breakdown
+for any service that more than one region reports on.
+
+Declare the regions in `config.yaml`:
+
+```yaml
+regions:
+  - name: "us-east"
+  - name: "eu-west"
+```
+
+Then run one process per region, all pointed at the same config and database:
+
+```bash
+pulsewatch serve  --region us-east    # web dashboard + the us-east worker
+pulsewatch worker --region eu-west    # an extra worker, no web server
+```
+
+- `pulsewatch serve --region NAME` runs the dashboard **and** a built-in worker
+  for `NAME` (default `local`, which is also what you get with no `regions:`
+  declared — so single-region setups are unchanged).
+- `pulsewatch worker --region NAME` runs a checks-only worker for `NAME`.
+- Incidents and alerts are per-region (a down alert reads `… is DOWN
+  [region: us-east]`), and each region keeps its own uptime %.
+
+Under Docker, run a container per region sharing the config mount and the
+`pulsewatch-data` volume — see the commented `worker-eu-west` service in
+[docker-compose.yml](docker-compose.yml). The shared SQLite database uses WAL
+mode with a busy timeout so several worker processes can write to it at once.
+
 ## Demoing the failure/recovery flow
 
 The included `config.yaml` ships with a "Flaky Demo Service" pointed at
@@ -247,13 +282,13 @@ Dockerfile                # slim-Python image running `pulsewatch serve`
 docker-compose.yml        # app + config mount + persistent DB volume on :8000
 config.example.yaml       # copy to config.yaml and fill in your values
 src/pulsewatch/
-├── cli.py        # click CLI: init / serve / add
-├── config.py     # config discovery (CWD → ~/.pulsewatch) + default template
+├── cli.py        # click CLI: init / serve / worker / add
+├── config.py     # config discovery (CWD → ~/.pulsewatch) + regions helper
 ├── main.py       # FastAPI routes, dashboard rendering, startup wiring
-├── monitor.py    # scheduler: runs checks, manages incident state
+├── monitor.py    # per-region scheduler: runs checks, manages incident state
 ├── checks.py     # pluggable checks (http / aws_status / database / custom_api)
-├── models.py     # Service / PingLog / Incident tables
-├── database.py   # SQLite engine + session
+├── models.py     # Service / RegionStatus / PingLog / Incident tables
+├── database.py   # SQLite engine (WAL, multi-process) + session + migrations
 ├── alerts.py     # pluggable alert channels (Discord / Slack / email)
 └── static/
     └── dashboard.html
