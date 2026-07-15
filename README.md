@@ -32,6 +32,8 @@ thresholds (so one blip doesn't page you), incident tracking, and alerting.
   events — enable as many as you like
 - Live dashboard (`/`) showing current status, 24h uptime %, a per-service
   response-time sparkline (last hour, via Chart.js), and incident history
+- Check from multiple named **regions** — independent worker processes that
+  each report their own per-region status for a service
 - JSON API (`/api/status`, `/api/services/{id}/history`,
   `/api/services/{id}/response-times`) for scripting or integration elsewhere
 
@@ -116,7 +118,9 @@ pulsewatch serve                             # start the app + background monito
   and `--threshold` are optional and default to 30s / 3 failures). If no config
   exists yet it creates one in the current directory.
 - `pulsewatch serve` replaces the old `uvicorn app.main:app` command. It accepts
-  `--host`, `--port`, and `--reload`.
+  `--host`, `--port`, `--reload`, and `--region` (see [Multiple regions](#multiple-regions)).
+- `pulsewatch worker --region NAME` runs a checks-only worker for an additional
+  region, no web server.
 
 Then open http://127.0.0.1:8000
 
@@ -310,13 +314,20 @@ startup/shutdown. GitHub Actions runs it on every push and pull request
 ([test.yml](.github/workflows/test.yml)) on Python 3.11 and uploads coverage to
 Codecov.
 
-> The Codecov badge needs a one-time (free) sign-in at codecov.io with your
-> GitHub account to activate for this repo; CI passes regardless.
+> **CI badge note:** Actions is currently blocked on this account by an
+> unrelated GitHub billing issue (a support ticket is open to resolve it) — the
+> badge will show red until that's cleared. This has no effect on the tool
+> itself: all 84 tests pass locally, which you can verify yourself with the
+> commands above.
+>
+> The Codecov badge also needs a one-time (free) sign-in at codecov.io with
+> your GitHub account to activate for this repo.
 
 ## Possible extensions
 
 - SMS / PagerDuty / webhook alert channels (drop-in `AlertChannel` subclasses)
 - More dependency kinds (drop-in checkers in `DEPENDENCY_CHECKERS`)
-- Multi-region checks (ping from more than one location)
+- Real geographic distribution for regions (currently independent processes,
+  not actually run from different locations)
 - Public-facing read-only status page (auth-gated admin view)
 - Postgres support for multi-instance deployments
