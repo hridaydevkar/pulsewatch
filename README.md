@@ -11,6 +11,29 @@ then again when it recovers.
 Built with FastAPI + SQLite + APScheduler. No external database or paid
 service required to run it.
 
+<p align="center">
+  <img src="docs/demo.gif" alt="PulseWatch dashboard demo — a service going down, an incident opening, and it auto-resolving on recovery" width="820">
+</p>
+
+## Screenshots
+
+**Live dashboard** — every service, uptime %, and a response-time sparkline, auto-refreshing every 15 seconds.
+
+<img src="docs/screenshots/dashboard.png" alt="PulseWatch dashboard showing service cards with status, uptime percentage, and response-time sparklines" width="820">
+
+**Incident lifecycle, captured live** — the same incident row, before and after auto-resolve. Nobody clicked "resolve" between these two.
+
+<table>
+<tr>
+<td width="50%"><b>Ongoing</b><br><img src="docs/screenshots/incident-ongoing.png" alt="Incident history showing an ONGOING incident"></td>
+<td width="50%"><b>Auto-resolved</b><br><img src="docs/screenshots/incident-resolved.png" alt="Same incident now RESOLVED after service recovery"></td>
+</tr>
+</table>
+
+**Discord alerts** — DOWN and RECOVERED events, sent the moment they happen.
+
+<img src="docs/screenshots/discord-alerts.png" alt="Discord channel showing DOWN and RECOVERED alerts from the Pulsewatch bot" width="820">
+
 ## Why this exists
 
 Every team running more than a couple of services eventually needs to know
@@ -35,7 +58,22 @@ thresholds (so one blip doesn't page you), incident tracking, and alerting.
 - Check from multiple named **regions** — independent worker processes that
   each report their own per-region status for a service
 - JSON API (`/api/status`, `/api/services/{id}/history`,
-  `/api/services/{id}/response-times`) for scripting or integration elsewhere
+`/api/services/{id}/response-times`) for scripting or integration elsewhere
+
+## Architecture
+
+```mermaid
+flowchart TD
+    C["config.yaml<br/>(services, thresholds, alert channels)"] --> M
+    M["Monitor<br/>(scheduler · runs checks · tracks incident state)"]
+    M -->|http / dependency checks| S["Your services<br/>+ upstream deps (AWS, DB, Stripe, ...)"]
+    M --> D[("SQLite<br/>pings · incidents · history")]
+    D --> W["Dashboard + JSON API<br/>(FastAPI)"]
+    M -->|on DOWN / RECOVERED| A["Alert channels"]
+    A --> DC["Discord"]
+    A --> SL["Slack"]
+    A --> EM["Email"]
+```
 
 ## Installing
 
@@ -79,8 +117,8 @@ Then open http://localhost:8000. The dashboard and API are served on port 8000.
 - **Config** is bind-mounted from your local `config.yaml` (read-only). Edit it
   on the host and `docker compose restart` to pick up changes.
 - **The SQLite database persists** across restarts and rebuilds in the
-  `pulsewatch-data` named volume — your ping history and incidents survive
-  `docker compose restart` / `up` / `down`. (Use `docker compose down -v` to
+`pulsewatch-data` named volume — your ping history and incidents survive
+`docker compose restart` / `up` / `down`. (Use `docker compose down -v` to
   also wipe the data volume.)
 
 ```bash
@@ -94,7 +132,7 @@ Prefer plain Docker? The equivalent without Compose:
 docker build -t pulsewatch .
 docker run -d --name pulsewatch -p 8000:8000 \
   -v "$PWD/config.yaml":/data/config.yaml:ro,z \
-  -v pulsewatch-data:/data \
+-v pulsewatch-data:/data \
   pulsewatch
 ```
 
@@ -108,17 +146,17 @@ docker run -d --name pulsewatch -p 8000:8000 \
 pulsewatch init                              # write a default config.yaml here
 pulsewatch add --name "My API" \
                --url https://api.example.com/health \
-               --interval 30 --threshold 3   # append a service, no hand-editing
+--interval 30 --threshold 3   # append a service, no hand-editing
 pulsewatch serve                             # start the app + background monitor
 ```
 
 - `pulsewatch init` creates a `config.yaml` in the current directory (use
-  `--force` to overwrite an existing one).
+`--force` to overwrite an existing one).
 - `pulsewatch add` appends a service to the active `config.yaml` (`--interval`
   and `--threshold` are optional and default to 30s / 3 failures). If no config
   exists yet it creates one in the current directory.
 - `pulsewatch serve` replaces the old `uvicorn app.main:app` command. It accepts
-  `--host`, `--port`, `--reload`, and `--region` (see [Multiple regions](#multiple-regions)).
+`--host`, `--port`, `--reload`, and `--region` (see [Multiple regions](#multiple-regions)).
 - `pulsewatch worker --region NAME` runs a checks-only worker for an additional
   region, no web server.
 
@@ -135,18 +173,18 @@ hand-edit it or use `pulsewatch add`. pulsewatch looks for config in this order:
 ```yaml
 services:
   - name: "My API"
-    url: "https://api.example.com/health"
-    check_interval_seconds: 30
-    failure_threshold: 3
+url: "https://api.example.com/health"
+check_interval_seconds: 30
+failure_threshold: 3
 
 alerts:
   - type: discord
-    webhook_url: "https://discord.com/api/webhooks/..."
+webhook_url: "https://discord.com/api/webhooks/..."
   - type: slack
-    webhook_url: "https://hooks.slack.com/services/..."
+webhook_url: "https://hooks.slack.com/services/..."
   - type: email
-    to: "oncall@example.com"
-    from: "pulsewatch@example.com"     # optional; defaults to the SMTP user
+to: "oncall@example.com"
+from: "pulsewatch@example.com"     # optional; defaults to the SMTP user
 ```
 
 `failure_threshold` is how many consecutive failed checks are needed before
@@ -167,11 +205,11 @@ event anywhere. `region` is required; `services` is an optional filter.
 
 ```yaml
   - name: "AWS us-east-1"
-    check_type: dependency
-    dependency_kind: aws_status
-    region: "us-east-1"
-    services: ["EC2", "S3"]     # optional
-    failure_threshold: 1
+check_type: dependency
+dependency_kind: aws_status
+region: "us-east-1"
+services: ["EC2", "S3"]     # optional
+failure_threshold: 1
 ```
 
 **`database`** — runs a lightweight `SELECT 1` over a SQLAlchemy connection
@@ -182,9 +220,9 @@ Credentials are never shown on the dashboard or API — the target is redacted t
 
 ```yaml
   - name: "Primary Postgres"
-    check_type: dependency
-    dependency_kind: database
-    connection_string: "postgresql://user:pass@localhost:5432/mydb"
+check_type: dependency
+dependency_kind: database
+connection_string: "postgresql://user:pass@localhost:5432/mydb"
 ```
 
 **`custom_api`** — fetches a JSON endpoint and asserts a nested field equals an
@@ -193,11 +231,11 @@ own status API (e.g. Stripe is healthy when `status.indicator == "none"`).
 
 ```yaml
   - name: "Stripe API"
-    check_type: dependency
-    dependency_kind: custom_api
-    url: "https://status.stripe.com/api/v2/status.json"
-    json_field: "status.indicator"
-    expected_value: "none"
+check_type: dependency
+dependency_kind: custom_api
+url: "https://status.stripe.com/api/v2/status.json"
+json_field: "status.indicator"
+expected_value: "none"
 ```
 
 To add a new dependency kind, write a checker in
@@ -276,9 +314,10 @@ of running it, without needing to break anything yourself.
 
 For a live demo: run the app, wait for a couple of failed checks on the
 flaky service, and watch the dashboard status flip to DOWN and an incident
-appear — then watch it self-resolve once a check succeeds again.
+appear — then watch it self-resolve once a check succeeds again. That's
+exactly what's captured in the GIF and the incident screenshots above.
 
-## Architecture
+## Project layout
 
 ```
 pyproject.toml            # packaging, dependencies, `pulsewatch` entry point
